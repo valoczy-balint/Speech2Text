@@ -45,13 +45,13 @@ Put audio files in `input/`, then pass the filename to the script. Generated fil
 
 ```bash
 # Default (auto-detect speaker count)
-python diarized_transcribe.py input.m4a
+python main.py input.m4a
 
 # Specify exact number of speakers
-python diarized_transcribe.py input.m4a --num-speakers 2
+python main.py input.m4a --num-speakers 2
 
 # Specify min/max speaker range
-python diarized_transcribe.py input.m4a --min-speakers 2 --max-speakers 4
+python main.py input.m4a --min-speakers 2 --max-speakers 4
 ```
 
 ### Advanced Usage
@@ -59,10 +59,10 @@ python diarized_transcribe.py input.m4a --min-speakers 2 --max-speakers 4
 ```bash
 # Use speaker name mapping
 echo '{"SPEAKER_00": "Alice", "SPEAKER_01": "Bob"}' > input/speakers.json
-python diarized_transcribe.py input.m4a --speaker-map speakers.json
+python main.py input.m4a --speaker-map speakers.json
 
 # Use different diarization model
-python diarized_transcribe.py input.m4a --model pyannote/speaker-diarization-community-1
+python main.py input.m4a --model pyannote/speaker-diarization-community-1
 ```
 
 ### Output Files

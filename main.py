@@ -15,7 +15,12 @@ from speaker_diarization import (
     check_diarization_dependencies,
     run_diarization,
 )
-from stt import TranscriptSegment, check_stt_dependencies, parse_srt, run_parakeet
+from speech_to_text import (
+    TranscriptSegment,
+    check_stt_dependencies,
+    parse_srt,
+    run_parakeet,
+)
 from text_correction import check_text_correction_dependencies, run_text_correction
 
 
