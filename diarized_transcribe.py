@@ -6,34 +6,22 @@ Speaker-labeled transcription using parakeet-mlx and pyannote.audio.
 import argparse
 import json
 import os
-import re
-import shutil
-import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
+
+from speaker_diarization import (
+    DiarizationTurn,
+    check_diarization_dependencies,
+    run_diarization,
+)
+from stt import TranscriptSegment, check_stt_dependencies, parse_srt, run_parakeet
+from text_correction import check_text_correction_dependencies, run_text_correction
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 INPUT_DIR = SCRIPT_DIR / "input"
 OUTPUT_DIR = SCRIPT_DIR / "output"
-
-
-@dataclass
-class TranscriptSegment:
-    """A single transcription segment with timing."""
-    start: float
-    end: float
-    text: str
-
-
-@dataclass
-class DiarizationTurn:
-    """A single speaker turn from diarization."""
-    start: float
-    end: float
-    speaker: str
 
 
 @dataclass
@@ -46,163 +34,10 @@ class DialogueTurn:
 
 
 def check_dependencies() -> None:
-    """Check for required dependencies."""
-    # Check ffmpeg
-    if shutil.which("ffmpeg") is None:
-        print("ERROR: ffmpeg not found. Install with: brew install ffmpeg", file=sys.stderr)
-        sys.exit(1)
-    
-    # Check parakeet-mlx
-    if shutil.which("parakeet-mlx") is None:
-        print("ERROR: parakeet-mlx not found. Install globally first.", file=sys.stderr)
-        sys.exit(1)
-    
-    # Check HF_TOKEN
-    if not os.environ.get("HF_TOKEN"):
-        print("ERROR: HF_TOKEN environment variable not set.", file=sys.stderr)
-        print("Export your Hugging Face token: export HF_TOKEN='hf_...'", file=sys.stderr)
-        sys.exit(1)
-
-
-def parse_srt_timestamp(ts: str) -> float:
-    """Parse SRT timestamp to seconds.
-    
-    Example: '00:00:12,345' -> 12.345
-    """
-    ts = ts.replace(',', '.')
-    parts = ts.split(':')
-    hours = int(parts[0])
-    minutes = int(parts[1])
-    seconds = float(parts[2])
-    return hours * 3600 + minutes * 60 + seconds
-
-
-def strip_tags(text: str) -> str:
-    """Remove HTML-like tags from text."""
-    return re.sub(r'<[^>]+>', '', text)
-
-
-def parse_srt(srt_path: Path) -> List[TranscriptSegment]:
-    """Parse SRT file into transcript segments."""
-    segments = []
-    
-    with open(srt_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-    
-    # Split into cues
-    cues = re.split(r'\n\n+', content.strip())
-    
-    for cue in cues:
-        lines = cue.strip().split('\n')
-        if len(lines) < 3:
-            continue
-        
-        # Line 0: index, Line 1: timestamps, Line 2+: text
-        timestamp_line = lines[1]
-        match = re.match(r'([\d:,]+)\s*-->\s*([\d:,]+)', timestamp_line)
-        if not match:
-            continue
-        
-        start = parse_srt_timestamp(match.group(1))
-        end = parse_srt_timestamp(match.group(2))
-        
-        # Join text lines, strip tags, normalize whitespace
-        text = ' '.join(lines[2:])
-        text = strip_tags(text)
-        text = ' '.join(text.split())
-        
-        if text:
-            segments.append(TranscriptSegment(start=start, end=end, text=text))
-    
-    return segments
-
-
-def run_parakeet(audio_path: Path, output_dir: Path) -> Path:
-    """Run parakeet-mlx to generate SRT transcript."""
-    print(f"Running parakeet-mlx on {audio_path}...")
-    
-    # Run from output/ because parakeet-mlx writes SRT files relative to cwd.
-    cmd = [
-        "parakeet-mlx",
-        str(audio_path),
-        "--output-format", "srt",
-        "--no-highlight-words"
-    ]
-    
-    try:
-        subprocess.run(
-            cmd,
-            check=True,
-            capture_output=True,
-            text=True,
-            cwd=output_dir,
-        )
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: parakeet-mlx failed: {e.stderr}", file=sys.stderr)
-        sys.exit(1)
-    
-    output_srt = output_dir / audio_path.with_suffix(".srt").name
-
-    if not output_srt.exists():
-        print(f"ERROR: Expected SRT file not found: {output_srt}", file=sys.stderr)
-        sys.exit(1)
-    
-    print(f"Transcript saved to {output_srt}")
-    return output_srt
-
-
-def run_diarization(
-    audio_path: Path,
-    model: str,
-    num_speakers: Optional[int],
-    min_speakers: Optional[int],
-    max_speakers: Optional[int],
-) -> List[DiarizationTurn]:
-    """Run pyannote speaker diarization."""
-    from pyannote.audio import Pipeline
-    
-    print(f"Loading diarization model: {model}...")
-    pipeline = Pipeline.from_pretrained(model, token=os.environ["HF_TOKEN"])
-    if pipeline is None:
-        print(
-            f"ERROR: Could not load diarization model: {model}. "
-            "Check your HF_TOKEN and confirm you accepted the model terms.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    
-    # Build kwargs
-    kwargs = {}
-    if num_speakers is not None:
-        kwargs["num_speakers"] = num_speakers
-    else:
-        if min_speakers is not None:
-            kwargs["min_speakers"] = min_speakers
-        if max_speakers is not None:
-            kwargs["max_speakers"] = max_speakers
-    
-    print(f"Running diarization on {audio_path}...")
-    if kwargs:
-        print(f"Diarization parameters: {kwargs}")
-    
-    output = pipeline(str(audio_path), **kwargs)
-    
-    # Handle different output formats
-    diarization = getattr(output, "exclusive_speaker_diarization", None)
-    if diarization is None:
-        diarization = getattr(output, "speaker_diarization", output)
-    
-    # Convert to list of turns
-    turns = []
-    for turn, _, speaker in diarization.itertracks(yield_label=True):
-        turns.append(DiarizationTurn(
-            start=turn.start,
-            end=turn.end,
-            speaker=speaker
-        ))
-    
-    print(f"Found {len(set(t.speaker for t in turns))} speakers in {len(turns)} turns")
-    return turns
+    """Check for required pipeline dependencies."""
+    check_stt_dependencies()
+    check_diarization_dependencies()
+    check_text_correction_dependencies()
 
 
 def merge_transcript_with_diarization(
@@ -321,7 +156,10 @@ def resolve_input_path(path: Path) -> Path:
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Speaker-labeled transcription using parakeet-mlx and pyannote.audio"
+        description=(
+            "Speaker-labeled transcription with STT, diarization, "
+            "and text correction"
+        )
     )
     
     parser.add_argument(
@@ -416,7 +254,8 @@ def main() -> None:
         "Outputs: "
         f"{OUTPUT_DIR / args.audio_file.with_suffix('.srt').name}, "
         f"{OUTPUT_DIR / args.audio_file.with_suffix('.txt').name}, "
-        f"{OUTPUT_DIR / args.audio_file.with_suffix('.json').name}\n"
+        f"{OUTPUT_DIR / args.audio_file.with_suffix('.json').name}, "
+        f"{OUTPUT_DIR / args.audio_file.with_suffix('.corrected.txt').name}\n"
     )
     
     # Run parakeet transcription
@@ -457,6 +296,9 @@ def main() -> None:
     
     write_dialogue_txt(dialogue, dialogue_txt)
     write_dialogue_json(dialogue, dialogue_json)
+
+    corrected_txt = OUTPUT_DIR / args.audio_file.with_suffix(".corrected.txt").name
+    run_text_correction(dialogue_txt, corrected_txt)
     
     print("\n=== Done! ===")
 

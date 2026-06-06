@@ -5,6 +5,7 @@ A macOS command-line tool for transcribing audio files with speaker diarization 
 Uses:
 - **parakeet-mlx** for fast, accurate transcription on Apple Silicon
 - **pyannote.audio** for speaker diarization (identifying who spoke when)
+- **mlx-vlm** for transcript text correction
 
 ## Prerequisites
 
@@ -16,6 +17,9 @@ brew install ffmpeg
 
 # Install parakeet-mlx globally
 pip3 install parakeet-mlx
+
+# Install mlx-vlm globally
+pip3 install mlx-vlm
 ```
 
 ## Installation
@@ -86,6 +90,8 @@ The script writes outputs to `output/`:
    ]
    ```
 
+4. **`<audio-name>.corrected.txt`** - Text transcript after MLX-VLM correction
+
 ## Command-Line Options
 
 | Option | Description |
@@ -106,6 +112,7 @@ The script writes outputs to `output/`:
 3. **Merging**: Assigns speakers to transcript segments by timestamp overlap
 4. **Grouping**: Combines adjacent segments from the same speaker
 5. **Output**: Moves the SRT and writes readable dialogue plus JSON files to `output/`
+6. **Correction**: Runs `mlx_vlm.generate` over the TXT transcript and writes `<audio-name>.corrected.txt`
 
 
 ## Troubleshooting
