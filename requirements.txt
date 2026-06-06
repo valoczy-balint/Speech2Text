@@ -1,0 +1,6 @@
+# Speaker diarization
+pyannote.audio
+
+# Audio processing (pyannote dependency)
+torch
+torchaudio
