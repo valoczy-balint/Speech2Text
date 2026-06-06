@@ -10,7 +10,6 @@ import re
 import shutil
 import subprocess
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -130,9 +129,8 @@ def run_parakeet(audio_path: Path, output_dir: Path) -> Path:
         "--no-highlight-words"
     ]
     
-    run_started_at = time.time() - 5
     try:
-        completed = subprocess.run(
+        subprocess.run(
             cmd,
             check=True,
             capture_output=True,
@@ -144,39 +142,10 @@ def run_parakeet(audio_path: Path, output_dir: Path) -> Path:
         sys.exit(1)
     
     output_srt = output_dir / audio_path.with_suffix(".srt").name
-    candidates = [
-        output_srt,
-        audio_path.with_suffix(".srt"),
-        SCRIPT_DIR / output_srt.name,
-        Path.cwd() / output_srt.name,
-    ]
-    candidates = list(dict.fromkeys(candidates))
 
-    generated_srt = next(
-        (
-            candidate
-            for candidate in candidates
-            if candidate.exists() and candidate.stat().st_mtime >= run_started_at
-        ),
-        None,
-    )
-
-    if generated_srt is None:
-        checked_paths = "\n  ".join(str(candidate) for candidate in candidates)
-        print(
-            "ERROR: Expected SRT file not found. Checked:\n"
-            f"  {checked_paths}",
-            file=sys.stderr,
-        )
-        if completed.stdout:
-            print(f"parakeet-mlx stdout:\n{completed.stdout}", file=sys.stderr)
-        if completed.stderr:
-            print(f"parakeet-mlx stderr:\n{completed.stderr}", file=sys.stderr)
+    if not output_srt.exists():
+        print(f"ERROR: Expected SRT file not found: {output_srt}", file=sys.stderr)
         sys.exit(1)
-
-    if generated_srt != output_srt:
-        output_srt.unlink(missing_ok=True)
-        shutil.move(str(generated_srt), output_srt)
     
     print(f"Transcript saved to {output_srt}")
     return output_srt
@@ -308,9 +277,16 @@ def apply_speaker_map(dialogue: List[DialogueTurn], speaker_map: Dict[str, str])
 
 def write_dialogue_txt(dialogue: List[DialogueTurn], output_path: Path) -> None:
     """Write human-readable dialogue transcript."""
+    lines = [
+        f"{turn.speaker}: {turn.text.strip()}"
+        for turn in dialogue
+        if turn.text.strip()
+    ]
+
     with open(output_path, 'w', encoding='utf-8') as f:
-        for turn in dialogue:
-            f.write(f"{turn.speaker}: {turn.text}\n\n")
+        f.write("\n".join(lines))
+        if lines:
+            f.write("\n")
     
     print(f"Dialogue saved to {output_path}")
 

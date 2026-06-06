@@ -14,7 +14,7 @@ Uses:
 # Install ffmpeg
 brew install ffmpeg
 
-# Install parakeet-mlx globally (if not already installed)
+# Install parakeet-mlx globally
 pip3 install parakeet-mlx
 ```
 
@@ -69,9 +69,7 @@ The script writes outputs to `output/`:
 2. **`<audio-name>.txt`** - Human-readable speaker-labeled dialogue:
    ```
    SPEAKER_00: Hello, this is the first speaker.
-
    SPEAKER_01: And this is the second speaker.
-
    SPEAKER_00: Right, exactly.
    ```
 
