@@ -158,6 +158,11 @@ def resolve_input_path(path: Path) -> Path:
     return INPUT_DIR / path
 
 
+def output_dir_for(audio_path: Path) -> Path:
+    """Return the run-specific output directory for an input audio file."""
+    return OUTPUT_DIR / audio_path.stem
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -252,19 +257,21 @@ def main() -> None:
     
     args = parse_args()
     check_dependencies()
+    run_output_dir = output_dir_for(args.audio_file)
+    run_output_dir.mkdir(parents=True, exist_ok=True)
     
     print(f"\n=== Speaker-Labeled Transcription ===")
     print(f"Input: {args.audio_file}")
     print(
         "Outputs: "
-        f"{OUTPUT_DIR / args.audio_file.with_suffix('.srt').name}, "
-        f"{OUTPUT_DIR / args.audio_file.with_suffix('.txt').name}, "
-        f"{OUTPUT_DIR / args.audio_file.with_suffix('.json').name}, "
-        f"{OUTPUT_DIR / args.audio_file.with_suffix('.corrected.txt').name}\n"
+        f"{run_output_dir / args.audio_file.with_suffix('.srt').name}, "
+        f"{run_output_dir / args.audio_file.with_suffix('.txt').name}, "
+        f"{run_output_dir / args.audio_file.with_suffix('.json').name}, "
+        f"{run_output_dir / args.audio_file.with_suffix('.corrected.txt').name}\n"
     )
     
     # Run parakeet transcription
-    srt_path = run_parakeet(args.audio_file, OUTPUT_DIR)
+    srt_path = run_parakeet(args.audio_file, run_output_dir)
     
     # Parse SRT
     print("Parsing transcript...")
@@ -296,13 +303,13 @@ def main() -> None:
         dialogue = apply_speaker_map(dialogue, speaker_map)
     
     # Write outputs
-    dialogue_txt = OUTPUT_DIR / args.audio_file.with_suffix(".txt").name
-    dialogue_json = OUTPUT_DIR / args.audio_file.with_suffix(".json").name
+    dialogue_txt = run_output_dir / args.audio_file.with_suffix(".txt").name
+    dialogue_json = run_output_dir / args.audio_file.with_suffix(".json").name
     
     write_dialogue_txt(dialogue, dialogue_txt)
     write_dialogue_json(dialogue, dialogue_json)
 
-    corrected_txt = OUTPUT_DIR / args.audio_file.with_suffix(".corrected.txt").name
+    corrected_txt = run_output_dir / args.audio_file.with_suffix(".corrected.txt").name
     run_text_correction(dialogue_txt, corrected_txt)
     
     print("\n=== Done! ===")

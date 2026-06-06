@@ -41,7 +41,7 @@ export HF_TOKEN="hf_..."
 
 ### Basic Usage
 
-Put audio files in `input/`, then pass the filename to the script. Generated files are written to `output/`.
+Put audio files in `input/`, then pass the filename to the script. Generated files are written to `output/<audio-name>/`.
 
 ```bash
 # Default (auto-detect speaker count)
@@ -67,17 +67,17 @@ python main.py input.m4a --model pyannote/speaker-diarization-community-1
 
 ### Output Files
 
-The script writes outputs to `output/`:
+For `input.m4a`, the script writes outputs to `output/input/`:
 
-1. **`<audio-name>.srt`** - Raw timestamped transcript from parakeet
-2. **`<audio-name>.txt`** - Human-readable speaker-labeled dialogue:
+1. **`input.srt`** - Raw timestamped transcript from parakeet
+2. **`input.txt`** - Human-readable speaker-labeled dialogue:
    ```
    SPEAKER_00: Hello, this is the first speaker.
    SPEAKER_01: And this is the second speaker.
    SPEAKER_00: Right, exactly.
    ```
 
-3. **`<audio-name>.json`** - Machine-readable JSON with timestamps:
+3. **`input.json`** - Machine-readable JSON with timestamps:
    ```json
    [
      {
@@ -90,7 +90,7 @@ The script writes outputs to `output/`:
    ]
    ```
 
-4. **`<audio-name>.corrected.txt`** - Text transcript after MLX-VLM correction
+4. **`input.corrected.txt`** - Text transcript after MLX-VLM correction
 
 ## Command-Line Options
 
@@ -111,7 +111,7 @@ The script writes outputs to `output/`:
 2. **Diarization**: Uses `pyannote.audio` to identify speaker segments
 3. **Merging**: Assigns speakers to transcript segments by timestamp overlap
 4. **Grouping**: Combines adjacent segments from the same speaker
-5. **Output**: Moves the SRT and writes readable dialogue plus JSON files to `output/`
+5. **Output**: Moves the SRT and writes readable dialogue plus JSON files to `output/<audio-name>/`
 6. **Correction**: Runs `mlx_vlm.generate` over the TXT transcript and writes `<audio-name>.corrected.txt`
 
 
