@@ -14,13 +14,6 @@ Uses:
 ```bash
 # Install ffmpeg
 brew install ffmpeg
-
-# Install parakeet-mlx globally
-pipx install parakeet-mlx
-
-# Install the correction backend globally
-pipx install mlx-lm
-pipx install mlx-vlm
 ```
 
 ## Installation
@@ -34,6 +27,8 @@ source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install -r requirements.txt
 ```
+
+The Python requirements include `parakeet-mlx` for speech-to-text and `mlx-lm`/`mlx-vlm` for transcript correction.
 
 ```bash
 # Set Hugging Face Token
@@ -108,12 +103,12 @@ For `input.m4a`, the script writes outputs to `output/input/`:
 
 ## How It Works
 
-1. **Transcription**: Runs globally-installed `parakeet-mlx` to generate timestamped transcript (SRT format)
+1. **Transcription**: Uses the `parakeet-mlx` Python library to generate timestamped transcript (SRT format)
 2. **Diarization**: Uses `pyannote.audio` to identify speaker segments
 3. **Merging**: Assigns speakers to transcript segments by timestamp overlap
 4. **Grouping**: Combines adjacent segments from the same speaker
 5. **Output**: Moves the SRT and writes readable dialogue plus JSON files to `output/<audio-name>/`
-6. **Correction**: Runs the configured MLX generator over the TXT transcript and writes `<audio-name>.corrected.txt`
+6. **Correction**: Uses the configured MLX Python library over the TXT transcript and writes `<audio-name>.corrected.txt`
 7. **Timing report**: Prints elapsed time for each step and the total run time
 
 
@@ -122,8 +117,8 @@ For `input.m4a`, the script writes outputs to `output/input/`:
 Install ffmpeg
  `brew install ffmpeg`
 
-Install parakeet-mlx
- `pip3 install parakeet-mlx`
+Install Python dependencies
+ `python -m pip install -r requirements.txt`
 
 Export your Hugging Face token
 Generate an access token at https://huggingface.co/settings/tokens

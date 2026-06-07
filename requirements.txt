@@ -4,3 +4,10 @@ pyannote.audio
 # Audio processing (pyannote dependency)
 torch
 torchaudio
+
+# MLX speech-to-text
+parakeet-mlx
+
+# MLX transcript correction
+mlx-lm
+mlx-vlm

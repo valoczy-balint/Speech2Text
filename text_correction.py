@@ -1,12 +1,12 @@
 """
-Transcript correction stage using MLX text generation CLIs.
+Transcript correction stage using MLX Python libraries.
 """
 
-import shutil
-import shlex
-import subprocess
+import importlib.util
 import sys
+from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 
 # Common generation settings
@@ -17,41 +17,61 @@ TEMPERATURE = "1.0"
 ENABLE_THINKING = False
 THINKING_BUDGET = "256"
 
-# mlx_lm.generate settings
-MLX_LM_COMMAND = "mlx_lm.generate"
+# mlx_lm settings
 MLX_LM_MODEL = "mlx-community/gemma-4-31B-it-uncensored-heretic-4bit"
 
-# mlx_vlm.generate settings
-MLX_VLM_COMMAND = "mlx_vlm.generate"
+# mlx_vlm settings
 # MLX_VLM_MODEL = "mlx-community/gemma-4-12B-it-qat-4bit"
-# MLX_VLM_MODEL = "mlx-community/gemma-4-26b-a4b-it-4bit"
-MLX_VLM_MODEL = "mlx-community/gemma-4-E4B-it-bf16"
+MLX_VLM_MODEL = "mlx-community/gemma-4-26b-a4b-it-4bit"
+# MLX_VLM_MODEL = "mlx-community/gemma-4-E4B-it-bf16"
 MLX_VLM_USE_DRAFT_MODEL = False
-# MLX_VLM_DRAFT_MODEL = "mlx-community/gemma-4-12B-it-qat-assistant-4bit"
 MLX_VLM_DRAFT_MODEL = "mlx-community/gemma-4-12B-it-qat-assistant-4bit"
 MLX_VLM_DRAFT_KIND = "mtp"
 
 
+def fail(message: str) -> None:
+    """Print an error and exit the pipeline."""
+    print(f"ERROR: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def parse_int_setting(name: str, value: str, *, minimum: int = 1) -> int:
+    """Parse an integer generation setting."""
+    try:
+        parsed = int(value)
+    except ValueError:
+        fail(f"{name} must be an integer, got {value!r}.")
+
+    if parsed < minimum:
+        fail(f"{name} must be at least {minimum}, got {parsed}.")
+
+    return parsed
+
+
+def parse_float_setting(name: str, value: str) -> float:
+    """Parse a floating-point generation setting."""
+    try:
+        return float(value)
+    except ValueError:
+        fail(f"{name} must be a number, got {value!r}.")
+
+
 def check_text_correction_dependencies() -> None:
-    """Check for text correction dependencies."""
-    command = {
-        "mlx_lm": MLX_LM_COMMAND,
-        "mlx_vlm": MLX_VLM_COMMAND,
+    """Check for text correction Python package dependencies."""
+    package = {
+        "mlx_lm": ("mlx_lm", "mlx-lm"),
+        "mlx_vlm": ("mlx_vlm", "mlx-vlm"),
     }.get(GENERATION_BACKEND)
 
-    if command is None:
-        print(
-            "ERROR: GENERATION_BACKEND must be 'mlx_lm' or 'mlx_vlm'.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    if package is None:
+        fail("GENERATION_BACKEND must be 'mlx_lm' or 'mlx_vlm'.")
 
-    if shutil.which(command) is None:
-        print(
-            f"ERROR: {command} not found. Install the matching MLX package first.",
-            file=sys.stderr,
+    module_name, package_name = package
+    if importlib.util.find_spec(module_name) is None:
+        fail(
+            f"{package_name} is not installed in this Python environment. "
+            "Run: python -m pip install -r requirements.txt"
         )
-        sys.exit(1)
 
 
 def build_correction_prompt(transcript: str) -> str:
@@ -77,18 +97,8 @@ def build_correction_prompt(transcript: str) -> str:
 
 
 def clean_model_output(output: str) -> str:
-    """Remove known MLX generator status lines from captured stdout."""
+    """Normalize generated text before saving."""
     lines = output.replace("\r\n", "\n").replace("\r", "\n").splitlines()
-
-    while lines and (
-        lines[0].startswith("Loading drafter")
-        or lines[0].startswith("  ->")
-        or lines[0].startswith("  \u2192")
-    ):
-        lines.pop(0)
-
-    while lines and lines[-1].startswith("Speculative decoding:"):
-        lines.pop()
 
     if len(lines) >= 2 and lines[0].strip().startswith("```") and lines[-1].strip() == "```":
         lines = lines[1:-1]
@@ -97,63 +107,201 @@ def clean_model_output(output: str) -> str:
     return f"{cleaned}\n" if cleaned else ""
 
 
-def print_debug_command(cmd: list[str]) -> None:
-    """Print the command that will be executed when debug output is enabled."""
-    if DEBUG_PRINT_COMMAND:
-        print("LLM command:")
-        print(shlex.join(cmd))
+def print_debug_call(function_name: str, params: dict[str, Any]) -> None:
+    """Print the library call settings when debug output is enabled."""
+    if not DEBUG_PRINT_COMMAND:
+        return
+
+    print("LLM library call:")
+    print(function_name)
+    for key, value in params.items():
+        print(f"  {key}={value!r}")
+
+
+@lru_cache(maxsize=1)
+def load_mlx_lm_resources(model_name: str) -> tuple[Any, Any]:
+    """Load and cache mlx_lm model resources."""
+    try:
+        from mlx_lm import load
+    except Exception as e:
+        fail(f"Failed to import mlx_lm: {e}")
+
+    try:
+        return load(model_name)
+    except Exception as e:
+        fail(f"Failed to load mlx_lm model {model_name!r}: {e}")
+
+
+def apply_mlx_lm_chat_template(tokenizer: Any, prompt: str) -> list[int]:
+    """Apply the same chat-template behavior used by mlx_lm.generate."""
+    prompt = prompt.replace("\\n", "\n").replace("\\t", "\t")
+
+    if getattr(tokenizer, "has_chat_template", False):
+        messages = [{"role": "user", "content": prompt}]
+        formatted_prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        return tokenizer.encode(formatted_prompt, add_special_tokens=False)
+
+    return tokenizer.encode(prompt)
 
 
 def run_mlx_lm_correction(prompt: str) -> str:
-    """Run mlx_lm.generate for transcript correction."""
-    cmd = [
-        MLX_LM_COMMAND,
-        "--model", MLX_LM_MODEL,
-        "--prompt", prompt,
-        "--max-tokens", MAX_TOKENS,
-        "--temp", TEMPERATURE,
-        "--verbose", "False",
-    ]
-    print_debug_command(cmd)
+    """Run mlx_lm library generation for transcript correction."""
+    max_tokens = parse_int_setting("MAX_TOKENS", MAX_TOKENS)
+    temperature = parse_float_setting("TEMPERATURE", TEMPERATURE)
+    model, tokenizer = load_mlx_lm_resources(MLX_LM_MODEL)
+    formatted_prompt = apply_mlx_lm_chat_template(tokenizer, prompt)
 
     try:
-        completed = subprocess.run(cmd, check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: {MLX_LM_COMMAND} failed: {e.stderr}", file=sys.stderr)
-        sys.exit(1)
+        from mlx_lm import generate
+        from mlx_lm.sample_utils import make_sampler
 
-    return clean_model_output(completed.stdout)
+        sampler = make_sampler(
+            temperature,
+            top_p=1.0,
+            min_p=0.0,
+            min_tokens_to_keep=1,
+            top_k=0,
+            xtc_probability=0.0,
+            xtc_threshold=0.0,
+            xtc_special_tokens=tokenizer.encode("\n") + list(tokenizer.eos_token_ids),
+        )
+        print_debug_call(
+            "mlx_lm.generate",
+            {
+                "model": MLX_LM_MODEL,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "prompt_chars": len(prompt),
+            },
+        )
+        generated = generate(
+            model,
+            tokenizer,
+            formatted_prompt,
+            max_tokens=max_tokens,
+            verbose=False,
+            sampler=sampler,
+        )
+    except Exception as e:
+        fail(f"mlx_lm generation failed: {e}")
+
+    return clean_model_output(generated)
+
+
+@lru_cache(maxsize=1)
+def load_mlx_vlm_resources(model_name: str) -> tuple[Any, Any]:
+    """Load and cache mlx_vlm model resources."""
+    try:
+        from mlx_vlm import load
+    except Exception as e:
+        fail(f"Failed to import mlx_vlm: {e}")
+
+    try:
+        return load(model_name)
+    except Exception as e:
+        fail(f"Failed to load mlx_vlm model {model_name!r}: {e}")
+
+
+@lru_cache(maxsize=1)
+def load_mlx_vlm_draft_model(model_name: str, draft_kind: str) -> tuple[Any, str]:
+    """Load and cache an mlx_vlm speculative decoding drafter."""
+    try:
+        from mlx_vlm.speculative.drafters import load_drafter
+    except Exception as e:
+        fail(f"Failed to import mlx_vlm drafter support: {e}")
+
+    try:
+        return load_drafter(model_name, kind=draft_kind or None)
+    except Exception as e:
+        fail(f"Failed to load mlx_vlm draft model {model_name!r}: {e}")
+
+
+def add_mlx_vlm_draft_model(model: Any, generation_kwargs: dict[str, Any]) -> None:
+    """Add optional mlx_vlm speculative decoding settings."""
+    if not MLX_VLM_USE_DRAFT_MODEL:
+        return
+
+    draft_model, resolved_kind = load_mlx_vlm_draft_model(
+        MLX_VLM_DRAFT_MODEL,
+        MLX_VLM_DRAFT_KIND,
+    )
+
+    try:
+        from mlx_vlm.speculative.drafters import validate_drafter_compatibility
+
+        validate_drafter_compatibility(model, draft_model, resolved_kind)
+    except ValueError as e:
+        print(
+            "WARNING: Speculative drafter is incompatible with the target model; "
+            f"falling back to standard generation. {e}",
+            file=sys.stderr,
+        )
+        return
+    except Exception as e:
+        fail(f"Failed to validate mlx_vlm draft model: {e}")
+
+    generation_kwargs["draft_model"] = draft_model
+    generation_kwargs["draft_kind"] = resolved_kind
 
 
 def run_mlx_vlm_correction(prompt: str) -> str:
-    """Run mlx_vlm.generate for transcript correction."""
-    cmd = [
-        MLX_VLM_COMMAND,
-        "--model", MLX_VLM_MODEL,
-        "--prompt", prompt,
-        "--max-tokens", MAX_TOKENS,
-        "--temperature", TEMPERATURE,
-        "--no-verbose",
-    ]
-    if ENABLE_THINKING:
-        cmd.extend([
-            "--enable-thinking",
-            "--thinking-budget", THINKING_BUDGET
-        ])
-    if MLX_VLM_USE_DRAFT_MODEL:
-        cmd.extend([
-            "--draft-model", MLX_VLM_DRAFT_MODEL,
-            "--draft-kind", MLX_VLM_DRAFT_KIND,
-        ])
-    print_debug_command(cmd)
+    """Run mlx_vlm library generation for transcript correction."""
+    max_tokens = parse_int_setting("MAX_TOKENS", MAX_TOKENS)
+    temperature = parse_float_setting("TEMPERATURE", TEMPERATURE)
+    model, processor = load_mlx_vlm_resources(MLX_VLM_MODEL)
 
     try:
-        completed = subprocess.run(cmd, check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: {MLX_VLM_COMMAND} failed: {e.stderr}", file=sys.stderr)
-        sys.exit(1)
+        from mlx_vlm import apply_chat_template, generate
 
-    return clean_model_output(completed.stdout)
+        formatted_prompt = apply_chat_template(
+            processor,
+            model.config,
+            prompt,
+            num_images=0,
+            num_audios=0,
+            enable_thinking=ENABLE_THINKING,
+        )
+
+        generation_kwargs: dict[str, Any] = {
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "verbose": False,
+            "enable_thinking": ENABLE_THINKING,
+        }
+        if ENABLE_THINKING:
+            generation_kwargs["thinking_budget"] = parse_int_setting(
+                "THINKING_BUDGET",
+                THINKING_BUDGET,
+                minimum=1,
+            )
+
+        add_mlx_vlm_draft_model(model, generation_kwargs)
+
+        print_debug_call(
+            "mlx_vlm.generate",
+            {
+                "model": MLX_VLM_MODEL,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "enable_thinking": ENABLE_THINKING,
+                "thinking_budget": generation_kwargs.get("thinking_budget"),
+                "draft_model": MLX_VLM_DRAFT_MODEL
+                if "draft_model" in generation_kwargs
+                else None,
+                "draft_kind": generation_kwargs.get("draft_kind"),
+                "prompt_chars": len(prompt),
+            },
+        )
+
+        result = generate(model, processor, formatted_prompt, **generation_kwargs)
+    except Exception as e:
+        fail(f"mlx_vlm generation failed: {e}")
+
+    return clean_model_output(result.text)
 
 
 def run_text_correction(input_txt: Path, output_txt: Path) -> Path:
@@ -167,15 +315,10 @@ def run_text_correction(input_txt: Path, output_txt: Path) -> Path:
     elif GENERATION_BACKEND == "mlx_vlm":
         corrected = run_mlx_vlm_correction(prompt)
     else:
-        print(
-            "ERROR: GENERATION_BACKEND must be 'mlx_lm' or 'mlx_vlm'.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        fail("GENERATION_BACKEND must be 'mlx_lm' or 'mlx_vlm'.")
 
     if not corrected:
-        print("ERROR: MLX generator did not produce corrected text.", file=sys.stderr)
-        sys.exit(1)
+        fail("MLX generator did not produce corrected text.")
 
     output_txt.write_text(corrected, encoding="utf-8")
     print(f"Corrected transcript saved to {output_txt}")
