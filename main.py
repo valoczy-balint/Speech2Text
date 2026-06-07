@@ -6,8 +6,9 @@ Speaker-labeled transcription using parakeet-mlx and pyannote.audio.
 import argparse
 import json
 import os
+import time
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 from diarization_matching import (
     DialogueTurn,
@@ -23,6 +24,7 @@ from text_correction import check_text_correction_dependencies, run_text_correct
 SCRIPT_DIR = Path(__file__).resolve().parent
 INPUT_DIR = SCRIPT_DIR / "input"
 OUTPUT_DIR = SCRIPT_DIR / "output"
+TimingReport = List[Tuple[str, float]]
 
 
 def check_dependencies() -> None:
@@ -30,6 +32,30 @@ def check_dependencies() -> None:
     check_stt_dependencies()
     check_diarization_dependencies()
     check_text_correction_dependencies()
+
+
+def format_duration(seconds: float) -> str:
+    """Format elapsed seconds for human-readable terminal output."""
+    if seconds < 60:
+        return f"{seconds:.2f}s"
+
+    minutes, remaining_seconds = divmod(seconds, 60)
+    return f"{int(minutes)}m {remaining_seconds:.2f}s"
+
+
+def finish_step(timings: TimingReport, step_name: str, started_at: float) -> None:
+    """Record and print the elapsed time for a completed step."""
+    elapsed = time.perf_counter() - started_at
+    timings.append((step_name, elapsed))
+    print(f"{step_name} completed in {format_duration(elapsed)}")
+
+
+def print_timing_report(timings: TimingReport, total_elapsed: float) -> None:
+    """Print a final timing report for the run."""
+    print("\n=== Timing Report ===")
+    for step_name, elapsed in timings:
+        print(f"{step_name}: {format_duration(elapsed)}")
+    print(f"Total: {format_duration(total_elapsed)}")
 
 
 def write_dialogue_txt(dialogue: List[DialogueTurn], output_path: Path) -> None:
@@ -169,13 +195,24 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     """Main entry point."""
+    total_started_at = time.perf_counter()
+    timings: TimingReport = []
+
     # Disable pyannote telemetry
     os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "0")
-    
+
+    step_started_at = time.perf_counter()
     args = parse_args()
+    finish_step(timings, "Argument parsing and validation", step_started_at)
+
+    step_started_at = time.perf_counter()
     check_dependencies()
+    finish_step(timings, "Dependency checks", step_started_at)
+
+    step_started_at = time.perf_counter()
     run_output_dir = output_dir_for(args.audio_file)
     run_output_dir.mkdir(parents=True, exist_ok=True)
+    finish_step(timings, "Output directory setup", step_started_at)
     
     print(f"\n=== Speaker-Labeled Transcription ===")
     print(f"Input: {args.audio_file}")
@@ -188,14 +225,19 @@ def main() -> None:
     )
     
     # Run parakeet transcription
+    step_started_at = time.perf_counter()
     srt_path = run_parakeet(args.audio_file, run_output_dir)
+    finish_step(timings, "Speech-to-text", step_started_at)
     
     # Parse SRT
     print("Parsing transcript...")
+    step_started_at = time.perf_counter()
     segments = parse_srt(srt_path)
     print(f"Found {len(segments)} transcript segments")
+    finish_step(timings, "SRT parsing", step_started_at)
     
     # Run diarization
+    step_started_at = time.perf_counter()
     turns = run_diarization(
         args.audio_file,
         args.model,
@@ -203,32 +245,44 @@ def main() -> None:
         args.min_speakers,
         args.max_speakers
     )
+    finish_step(timings, "Speaker diarization", step_started_at)
     
     # Merge transcript with diarization
     print("Merging transcript with speaker labels...")
+    step_started_at = time.perf_counter()
     dialogue = merge_transcript_with_diarization(segments, turns)
+    finish_step(timings, "Transcript and speaker matching", step_started_at)
     
     # Group adjacent turns
+    step_started_at = time.perf_counter()
     dialogue = group_adjacent_turns(dialogue)
     print(f"Grouped into {len(dialogue)} dialogue turns")
+    finish_step(timings, "Adjacent turn grouping", step_started_at)
     
     # Apply speaker mapping if provided
     if args.speaker_map:
         print(f"Applying speaker mapping from {args.speaker_map}...")
+        step_started_at = time.perf_counter()
         with open(args.speaker_map, 'r', encoding='utf-8') as f:
             speaker_map = json.load(f)
         dialogue = apply_speaker_map(dialogue, speaker_map)
+        finish_step(timings, "Speaker mapping", step_started_at)
     
     # Write outputs
     dialogue_txt = run_output_dir / args.audio_file.with_suffix(".txt").name
     dialogue_json = run_output_dir / args.audio_file.with_suffix(".json").name
     
+    step_started_at = time.perf_counter()
     write_dialogue_txt(dialogue, dialogue_txt)
     write_dialogue_json(dialogue, dialogue_json)
+    finish_step(timings, "Output writing", step_started_at)
 
     corrected_txt = run_output_dir / args.audio_file.with_suffix(".corrected.txt").name
+    step_started_at = time.perf_counter()
     run_text_correction(dialogue_txt, corrected_txt)
+    finish_step(timings, "Text correction", step_started_at)
     
+    print_timing_report(timings, time.perf_counter() - total_started_at)
     print("\n=== Done! ===")
 
 
