@@ -12,8 +12,8 @@ from typing import Any
 # Common generation settings
 GENERATION_BACKEND = "mlx_vlm"  # "mlx_lm" or "mlx_vlm"
 DEBUG_PRINT_COMMAND = True
-MAX_TOKENS = "2560"
-TEMPERATURE = "1.0"
+MAX_TOKENS = "256000"
+TEMPERATURE = "0.3"
 ENABLE_THINKING = False
 THINKING_BUDGET = "256"
 

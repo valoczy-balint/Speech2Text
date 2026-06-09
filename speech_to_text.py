@@ -12,12 +12,21 @@ from pathlib import Path
 from typing import Any, List
 
 
+# PARAKEET_MODEL = "mlx-community/parakeet-tdt-1.1b"
 PARAKEET_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
 PARAKEET_USE_FP32 = False
 PARAKEET_CHUNK_DURATION = 60 * 2
 PARAKEET_OVERLAP_DURATION = 15
 PARAKEET_LOCAL_ATTENTION = False
 PARAKEET_LOCAL_ATTENTION_CONTEXT_SIZE = 256
+PARAKEET_DECODING = "greedy"  # "greedy" or "beam"
+PARAKEET_BEAM_SIZE = 5
+PARAKEET_LENGTH_PENALTY = 0.013
+PARAKEET_PATIENCE = 3.5
+PARAKEET_DURATION_REWARD = 0.67
+PARAKEET_SENTENCE_MAX_WORDS = None
+PARAKEET_SENTENCE_SILENCE_GAP = None
+PARAKEET_SENTENCE_MAX_DURATION = None
 
 
 @dataclass
@@ -134,16 +143,28 @@ def load_parakeet_model(model_name: str) -> Any:
 def build_decoding_config() -> Any:
     """Build the default parakeet decoding config used by the CLI."""
     try:
-        from parakeet_mlx import DecodingConfig, Greedy, SentenceConfig
+        from parakeet_mlx import Beam, DecodingConfig, Greedy, SentenceConfig
     except Exception as e:
         fail(f"Failed to import parakeet decoding config: {e}")
 
+    if PARAKEET_DECODING == "beam":
+        decoding = Beam(
+            beam_size=PARAKEET_BEAM_SIZE,
+            length_penalty=PARAKEET_LENGTH_PENALTY,
+            patience=PARAKEET_PATIENCE,
+            duration_reward=PARAKEET_DURATION_REWARD,
+        )
+    elif PARAKEET_DECODING == "greedy":
+        decoding = Greedy()
+    else:
+        fail("PARAKEET_DECODING must be 'greedy' or 'beam'.")
+
     return DecodingConfig(
-        decoding=Greedy(),
+        decoding=decoding,
         sentence=SentenceConfig(
-            max_words=None,
-            silence_gap=None,
-            max_duration=None,
+            max_words=PARAKEET_SENTENCE_MAX_WORDS,
+            silence_gap=PARAKEET_SENTENCE_SILENCE_GAP,
+            max_duration=PARAKEET_SENTENCE_MAX_DURATION,
         ),
     )
 

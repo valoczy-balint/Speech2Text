@@ -6,6 +6,7 @@ Speaker-labeled transcription using parakeet-mlx and pyannote.audio.
 import argparse
 import json
 import os
+import sys
 import time
 from pathlib import Path
 from typing import List, Tuple
@@ -25,13 +26,26 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 INPUT_DIR = SCRIPT_DIR / "input"
 OUTPUT_DIR = SCRIPT_DIR / "output"
 TimingReport = List[Tuple[str, float]]
+STEP_STT = "stt"
+STEP_DIARIZATION = "diarization"
+STEP_CORRECTION = "correction"
+PIPELINE_STEPS = (STEP_STT, STEP_DIARIZATION, STEP_CORRECTION)
 
 
-def check_dependencies() -> None:
+def fail(message: str) -> None:
+    """Print an error and exit the pipeline."""
+    print(f"ERROR: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def check_dependencies(steps: set[str]) -> None:
     """Check for required pipeline dependencies."""
-    check_stt_dependencies()
-    check_diarization_dependencies()
-    check_text_correction_dependencies()
+    if STEP_STT in steps:
+        check_stt_dependencies()
+    if STEP_DIARIZATION in steps:
+        check_diarization_dependencies()
+    if STEP_CORRECTION in steps:
+        check_text_correction_dependencies()
 
 
 def format_duration(seconds: float) -> str:
@@ -106,6 +120,17 @@ def output_dir_for(audio_path: Path) -> Path:
     return OUTPUT_DIR / audio_path.stem
 
 
+def require_existing_output(path: Path, step: str, producing_step: str) -> None:
+    """Require an existing output when its producing step is skipped."""
+    if path.exists():
+        return
+
+    fail(
+        f"{step!r} step requires {path}. "
+        f"Run with --steps {producing_step} first or include {producing_step!r}."
+    )
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -150,8 +175,21 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="JSON file mapping speaker labels to names"
     )
+
+    parser.add_argument(
+        "--steps",
+        nargs="+",
+        choices=PIPELINE_STEPS,
+        default=list(PIPELINE_STEPS),
+        help=(
+            "Pipeline steps to run, in pipeline order "
+            "(default: stt diarization correction)"
+        )
+    )
     
     args = parser.parse_args()
+    requested_steps = set(args.steps)
+    args.steps = [step for step in PIPELINE_STEPS if step in requested_steps]
 
     if args.audio_file.is_absolute():
         parser.error("audio_file must be a filename or relative path inside input/")
@@ -203,84 +241,90 @@ def main() -> None:
 
     step_started_at = time.perf_counter()
     args = parse_args()
+    selected_steps = set(args.steps)
     finish_step(timings, "Argument parsing and validation", step_started_at)
 
     step_started_at = time.perf_counter()
-    check_dependencies()
+    check_dependencies(selected_steps)
     finish_step(timings, "Dependency checks", step_started_at)
 
     step_started_at = time.perf_counter()
     run_output_dir = output_dir_for(args.audio_file)
     run_output_dir.mkdir(parents=True, exist_ok=True)
     finish_step(timings, "Output directory setup", step_started_at)
+
+    srt_path = run_output_dir / args.audio_file.with_suffix(".srt").name
+    dialogue_txt = run_output_dir / args.audio_file.with_suffix(".txt").name
+    dialogue_json = run_output_dir / args.audio_file.with_suffix(".json").name
+    corrected_txt = run_output_dir / args.audio_file.with_suffix(".corrected.txt").name
     
     print(f"\n=== Speaker-Labeled Transcription ===")
     print(f"Input: {args.audio_file}")
+    print(f"Steps: {', '.join(args.steps)}")
     print(
         "Outputs: "
-        f"{run_output_dir / args.audio_file.with_suffix('.srt').name}, "
-        f"{run_output_dir / args.audio_file.with_suffix('.txt').name}, "
-        f"{run_output_dir / args.audio_file.with_suffix('.json').name}, "
-        f"{run_output_dir / args.audio_file.with_suffix('.corrected.txt').name}\n"
+        f"{srt_path}, "
+        f"{dialogue_txt}, "
+        f"{dialogue_json}, "
+        f"{corrected_txt}\n"
     )
     
-    # Run parakeet transcription
-    step_started_at = time.perf_counter()
-    srt_path = run_parakeet(args.audio_file, run_output_dir)
-    finish_step(timings, "Speech-to-text", step_started_at)
-    
-    # Parse SRT
-    print("Parsing transcript...")
-    step_started_at = time.perf_counter()
-    segments = parse_srt(srt_path)
-    print(f"Found {len(segments)} transcript segments")
-    finish_step(timings, "SRT parsing", step_started_at)
-    
-    # Run diarization
-    step_started_at = time.perf_counter()
-    turns = run_diarization(
-        args.audio_file,
-        args.model,
-        args.num_speakers,
-        args.min_speakers,
-        args.max_speakers
-    )
-    finish_step(timings, "Speaker diarization", step_started_at)
-    
-    # Merge transcript with diarization
-    print("Merging transcript with speaker labels...")
-    step_started_at = time.perf_counter()
-    dialogue = merge_transcript_with_diarization(segments, turns)
-    finish_step(timings, "Transcript and speaker matching", step_started_at)
-    
-    # Group adjacent turns
-    step_started_at = time.perf_counter()
-    dialogue = group_adjacent_turns(dialogue)
-    print(f"Grouped into {len(dialogue)} dialogue turns")
-    finish_step(timings, "Adjacent turn grouping", step_started_at)
-    
-    # Apply speaker mapping if provided
-    if args.speaker_map:
-        print(f"Applying speaker mapping from {args.speaker_map}...")
+    if STEP_STT in selected_steps:
         step_started_at = time.perf_counter()
-        with open(args.speaker_map, 'r', encoding='utf-8') as f:
-            speaker_map = json.load(f)
-        dialogue = apply_speaker_map(dialogue, speaker_map)
-        finish_step(timings, "Speaker mapping", step_started_at)
-    
-    # Write outputs
-    dialogue_txt = run_output_dir / args.audio_file.with_suffix(".txt").name
-    dialogue_json = run_output_dir / args.audio_file.with_suffix(".json").name
-    
-    step_started_at = time.perf_counter()
-    write_dialogue_txt(dialogue, dialogue_txt)
-    write_dialogue_json(dialogue, dialogue_json)
-    finish_step(timings, "Output writing", step_started_at)
+        srt_path = run_parakeet(args.audio_file, run_output_dir)
+        finish_step(timings, "Speech-to-text", step_started_at)
+    elif STEP_DIARIZATION in selected_steps:
+        require_existing_output(srt_path, STEP_DIARIZATION, STEP_STT)
+        print(f"Using existing SRT transcript: {srt_path}")
 
-    corrected_txt = run_output_dir / args.audio_file.with_suffix(".corrected.txt").name
-    step_started_at = time.perf_counter()
-    run_text_correction(dialogue_txt, corrected_txt)
-    finish_step(timings, "Text correction", step_started_at)
+    if STEP_DIARIZATION in selected_steps:
+        print("Parsing transcript...")
+        step_started_at = time.perf_counter()
+        segments = parse_srt(srt_path)
+        print(f"Found {len(segments)} transcript segments")
+        finish_step(timings, "SRT parsing", step_started_at)
+
+        step_started_at = time.perf_counter()
+        turns = run_diarization(
+            args.audio_file,
+            args.model,
+            args.num_speakers,
+            args.min_speakers,
+            args.max_speakers
+        )
+        finish_step(timings, "Speaker diarization", step_started_at)
+
+        print("Merging transcript with speaker labels...")
+        step_started_at = time.perf_counter()
+        dialogue = merge_transcript_with_diarization(segments, turns)
+        finish_step(timings, "Transcript and speaker matching", step_started_at)
+
+        step_started_at = time.perf_counter()
+        dialogue = group_adjacent_turns(dialogue)
+        print(f"Grouped into {len(dialogue)} dialogue turns")
+        finish_step(timings, "Adjacent turn grouping", step_started_at)
+
+        if args.speaker_map:
+            print(f"Applying speaker mapping from {args.speaker_map}...")
+            step_started_at = time.perf_counter()
+            with open(args.speaker_map, 'r', encoding='utf-8') as f:
+                speaker_map = json.load(f)
+            dialogue = apply_speaker_map(dialogue, speaker_map)
+            finish_step(timings, "Speaker mapping", step_started_at)
+
+        step_started_at = time.perf_counter()
+        write_dialogue_txt(dialogue, dialogue_txt)
+        write_dialogue_json(dialogue, dialogue_json)
+        finish_step(timings, "Output writing", step_started_at)
+
+    if STEP_CORRECTION in selected_steps:
+        if STEP_DIARIZATION not in selected_steps:
+            require_existing_output(dialogue_txt, STEP_CORRECTION, STEP_DIARIZATION)
+            print(f"Using existing dialogue transcript: {dialogue_txt}")
+
+        step_started_at = time.perf_counter()
+        run_text_correction(dialogue_txt, corrected_txt)
+        finish_step(timings, "Text correction", step_started_at)
     
     print_timing_report(timings, time.perf_counter() - total_started_at)
     print("\n=== Done! ===")

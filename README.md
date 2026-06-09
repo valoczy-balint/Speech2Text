@@ -48,6 +48,10 @@ python main.py input.m4a --num-speakers 2
 
 # Specify min/max speaker range
 python main.py input.m4a --min-speakers 2 --max-speakers 4
+
+# Run only selected pipeline steps
+python main.py input.m4a --steps stt
+python main.py input.m4a --steps diarization correction
 ```
 
 ### Advanced Usage
@@ -98,8 +102,11 @@ For `input.m4a`, the script writes outputs to `output/input/`:
 | `--max-speakers N` | Maximum number of speakers |
 | `--model MODEL` | Pyannote model (default: `pyannote/speaker-diarization-community-1`) |
 | `--speaker-map FILE` | JSON file inside `input/` mapping speaker labels to names |
+| `--steps STEP [STEP ...]` | Pipeline steps to run: `stt`, `diarization`, `correction` |
 
 **Note:** You can specify either `--num-speakers` OR `--min-speakers`/`--max-speakers`, but not both.
+
+When an earlier step is skipped, the script expects that step's output to already exist in `output/<audio-name>/`.
 
 ## How It Works
 
