@@ -13,7 +13,7 @@ from typing import Any
 GENERATION_BACKEND = "mlx_vlm"  # "mlx_lm" or "mlx_vlm"
 DEBUG_PRINT_COMMAND = True
 MAX_TOKENS = "256000"
-TEMPERATURE = "0.3"
+TEMPERATURE = "0.0"
 ENABLE_THINKING = False
 THINKING_BUDGET = "256"
 
